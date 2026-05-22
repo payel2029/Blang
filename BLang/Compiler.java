@@ -2,12 +2,17 @@ import java.io.*;
 import java.nio.file.*;
 import java.util.*;
 
-
-enum TokenType {
+enum TokenType
+{
     NUMBER, STRING, IDENTIFIER,
     EQUALS, PLUS, MINUS, MULTIPLY, DIVIDE,
-    LPAREN, RPAREN, SEMICOLON,
-    PRINT, LET, EOF
+    LPAREN, RPAREN, LBRACE, RBRACE,
+    SEMICOLON,
+
+    PRINT, LET,
+    IF, ELSE, GT,
+
+    EOF
 }
 
 class Token {
@@ -20,13 +25,7 @@ class Token {
         this.value = value;
         this.line = line;
     }
-    
-    @Override
-    public String toString() {
-        return "Token(" + type + ", '" + value + "', line " + line + ")";
-    }
 }
-
 
 class Lexer {
     private String src;
@@ -39,22 +38,21 @@ class Lexer {
     Lexer(String src) {
         this.src = src;
         current = src.length() > 0 ? src.charAt(0) : '\0';
+
         keywords.put("লিখো", TokenType.PRINT);
         keywords.put("ধরি", TokenType.LET);
+        keywords.put("যদি", TokenType.IF);
+        keywords.put("অন্যথায়", TokenType.ELSE);
     }
 
     void advance() {
         pos++;
-        if (pos >= src.length())
-            current = '\0';
-        else
-            current = src.charAt(pos);
+        current = (pos >= src.length()) ? '\0' : src.charAt(pos);
     }
 
     void skipWhitespace() {
         while (current != '\0' && Character.isWhitespace(current)) {
-            if (current == '\n')
-                line++;
+            if (current == '\n') line++;
             advance();
         }
     }
@@ -67,72 +65,80 @@ class Lexer {
         return (char) ('0' + (c - '০'));
     }
 
+    Token string() {
+        advance(); // skip "
+
+        StringBuilder sb = new StringBuilder();
+
+        while (current != '\0' && current != '"') {
+
+            if (current == '\\') {
+                advance();
+                if (current == 'n') sb.append('\n');
+                else if (current == 't') sb.append('\t');
+                else sb.append(current);
+            } else {
+                sb.append(current);
+            }
+
+            advance();
+        }
+
+        if (current == '\0') {
+            throw new RuntimeException("Unterminated string");
+        }
+
+        advance(); 
+        return new Token(TokenType.STRING, sb.toString(), line);
+    }
+
     Token number() {
         StringBuilder sb = new StringBuilder();
-        boolean hasDecimal = false;
+        boolean dot = false;
 
         while (current != '\0' &&
-              (Character.isDigit(current) || isBanglaDigit(current) || current == '.')) {
-            
+                (Character.isDigit(current) || isBanglaDigit(current) || current == '.')) {
+
             if (current == '.') {
-                if (hasDecimal) {
-                    throw new RuntimeException("Multiple decimal points in number at line " + line);
-                }
-                hasDecimal = true;
-                sb.append(current);
+                if (dot) throw new RuntimeException("Invalid number");
+                dot = true;
+                sb.append('.');
             } else if (isBanglaDigit(current)) {
                 sb.append(convertBanglaDigit(current));
             } else {
                 sb.append(current);
             }
-            
             advance();
         }
 
         return new Token(TokenType.NUMBER, sb.toString(), line);
     }
 
-    Token identifierOrKeyword() {
+    Token identifier() {
         StringBuilder sb = new StringBuilder();
-        while (current != '\0' && (Character.isLetterOrDigit(current) || 
-               Character.isLetter(current) || current >= 0x0980 && current <= 0x09FF)) {
+
+        while (current != '\0' &&
+                (Character.isLetterOrDigit(current) || current >= 0x0980)) {
             sb.append(current);
             advance();
         }
-        String word = sb.toString();
-        TokenType type = keywords.getOrDefault(word, TokenType.IDENTIFIER);
-        return new Token(type, word, line);
-    }
 
-    Token string() {
-        advance(); 
-        StringBuilder sb = new StringBuilder();
-        while (current != '\0' && current != '"') {
-            if (current == '\\') {
-                advance();
-                if (current == 'n') sb.append('\n');
-                else if (current == 't') sb.append('\t');
-                else if (current == '"') sb.append('"');
-                else if (current == '\\') sb.append('\\');
-                else sb.append('\\').append(current);
-            } else {
-                sb.append(current);
-            }
-            advance();
-        }
-        if (current == '\0') {
-            throw new RuntimeException("Unterminated string at line " + line);
-        }
-        advance(); 
-        return new Token(TokenType.STRING, sb.toString(), line);
+        String word = sb.toString();
+        return new Token(keywords.getOrDefault(word, TokenType.IDENTIFIER), word, line);
     }
 
     List<Token> tokenize() {
         List<Token> tokens = new ArrayList<>();
 
         while (current != '\0') {
+
             if (Character.isWhitespace(current)) {
                 skipWhitespace();
+                continue;
+            }
+
+            if (current == '"') {
+                tokens.add(string());
                 continue;
             }
 
@@ -142,44 +148,25 @@ class Lexer {
             }
 
             if (Character.isLetter(current) || current >= 0x0980) {
-                tokens.add(identifierOrKeyword());
-                continue;
-            }
-
-            if (current == '"') {
-                tokens.add(string());
+                tokens.add(identifier());
                 continue;
             }
 
             switch (current) {
-                case '=':
-                    tokens.add(new Token(TokenType.EQUALS, "=", line));
-                    break;
-                case '+':
-                    tokens.add(new Token(TokenType.PLUS, "+", line));
-                    break;
-                case '-':
-                    tokens.add(new Token(TokenType.MINUS, "-", line));
-                    break;
-                case '*':
-                    tokens.add(new Token(TokenType.MULTIPLY, "*", line));
-                    break;
-                case '/':
-                    tokens.add(new Token(TokenType.DIVIDE, "/", line));
-                    break;
-                case '(':
-                    tokens.add(new Token(TokenType.LPAREN, "(", line));
-                    break;
-                case ')':
-                    tokens.add(new Token(TokenType.RPAREN, ")", line));
-                    break;
-                case ';':
-                    tokens.add(new Token(TokenType.SEMICOLON, ";", line));
-                    break;
-                default:
-                    throw new RuntimeException("Unknown character: '" + current + 
-                                             "' at line " + line + ", position " + pos);
+                case '=' -> tokens.add(new Token(TokenType.EQUALS, "=", line));
+                case '+' -> tokens.add(new Token(TokenType.PLUS, "+", line));
+                case '-' -> tokens.add(new Token(TokenType.MINUS, "-", line));
+                case '*' -> tokens.add(new Token(TokenType.MULTIPLY, "*", line));
+                case '/' -> tokens.add(new Token(TokenType.DIVIDE, "/", line));
+                case '(' -> tokens.add(new Token(TokenType.LPAREN, "(", line));
+                case ')' -> tokens.add(new Token(TokenType.RPAREN, ")", line));
+                case '{' -> tokens.add(new Token(TokenType.LBRACE, "{", line));
+                case '}' -> tokens.add(new Token(TokenType.RBRACE, "}", line));
+                case ';' -> tokens.add(new Token(TokenType.SEMICOLON, ";", line));
+                case '>' -> tokens.add(new Token(TokenType.GT, ">", line));
+                default -> throw new RuntimeException("Unknown char: " + current);
             }
+
             advance();
         }
 
@@ -188,35 +175,23 @@ class Lexer {
     }
 }
 
+interface ASTNode {}
 
-interface ASTNode {
-}
-
-abstract class ExprNode {
-}
+abstract class ExprNode implements ASTNode {}
 
 class NumberNode extends ExprNode {
     String value;
-
-    NumberNode(String v) {
-        value = v;
-    }
+    NumberNode(String v) { value = v; }
 }
 
 class StringNode extends ExprNode {
     String value;
-
-    StringNode(String v) {
-        value = v;
-    }
+    StringNode(String v) { value = v; }
 }
 
 class VarNode extends ExprNode {
     String name;
-
-    VarNode(String n) {
-        name = n;
-    }
+    VarNode(String n) { name = n; }
 }
 
 class BinaryOpNode extends ExprNode {
@@ -224,52 +199,52 @@ class BinaryOpNode extends ExprNode {
     TokenType op;
 
     BinaryOpNode(ExprNode l, TokenType o, ExprNode r) {
-        left = l;
-        op = o;
-        right = r;
+        left = l; op = o; right = r;
     }
 }
 
+/* Statements */
 class AssignmentNode implements ASTNode {
     String name;
     ExprNode expr;
 
     AssignmentNode(String n, ExprNode e) {
-        name = n;
-        expr = e;
+        name = n; expr = e;
     }
 }
 
 class PrintNode implements ASTNode {
     ExprNode expr;
-
-    PrintNode(ExprNode e) {
-        expr = e;
-    }
+    PrintNode(ExprNode e) { expr = e; }
 }
 
+class IfNode implements ASTNode {
+    ExprNode cond;
+    List<ASTNode> ifBlock;
+    List<ASTNode> elseBlock;
+
+    IfNode(ExprNode c, List<ASTNode> i, List<ASTNode> e) {
+        cond = c;
+        ifBlock = i;
+        elseBlock = e;
+    }
+}
 
 class Parser {
     List<Token> tokens;
     int pos = 0;
 
-    Parser(List<Token> t) {
-        tokens = t;
+    Parser(List<Token> t) { tokens = t; }
+
+    Token cur() {
+        return pos < tokens.size() ? tokens.get(pos)
+                : new Token(TokenType.EOF, "", -1);
     }
 
-    Token current() {
-        if (pos >= tokens.size()) {
-            return new Token(TokenType.EOF, "", -1);
-        }
-        return tokens.get(pos);
-    }
-
-    void advance() {
-        pos++;
-    }
+    void advance() { pos++; }
 
     boolean match(TokenType t) {
-        if (current().type == t) {
+        if (cur().type == t) {
             advance();
             return true;
         }
@@ -277,21 +252,16 @@ class Parser {
     }
 
     void expect(TokenType t) {
-        if (!match(t)) {
-            throw new RuntimeException("Expected " + t + " but found " + current().type + 
-                                     " at line " + current().line);
-        }
+        if (!match(t))
+            throw new RuntimeException("Expected " + t);
     }
 
     ExprNode factor() {
-        Token t = current();
+        Token t = cur();
 
-        if (match(TokenType.NUMBER))
-            return new NumberNode(t.value);
-        if (match(TokenType.STRING))
-            return new StringNode(t.value);
-        if (match(TokenType.IDENTIFIER))
-            return new VarNode(t.value);
+        if (match(TokenType.NUMBER)) return new NumberNode(t.value);
+        if (match(TokenType.STRING)) return new StringNode(t.value);
+        if (match(TokenType.IDENTIFIER)) return new VarNode(t.value);
 
         if (match(TokenType.LPAREN)) {
             ExprNode e = expr();
@@ -299,259 +269,188 @@ class Parser {
             return e;
         }
 
-        throw new RuntimeException("Invalid expression at line " + t.line);
+        throw new RuntimeException("Invalid expression");
     }
 
     ExprNode term() {
-        ExprNode node = factor();
+        ExprNode n = factor();
 
-        while (current().type == TokenType.MULTIPLY ||
-                current().type == TokenType.DIVIDE) {
-            TokenType op = current().type;
+        while (cur().type == TokenType.MULTIPLY ||
+               cur().type == TokenType.DIVIDE) {
+            TokenType op = cur().type;
             advance();
-            node = new BinaryOpNode(node, op, factor());
+            n = new BinaryOpNode(n, op, factor());
         }
-
-        return node;
+        return n;
     }
 
     ExprNode expr() {
-        ExprNode node = term();
+        ExprNode n = term();
 
-        while (current().type == TokenType.PLUS ||
-                current().type == TokenType.MINUS) {
-            TokenType op = current().type;
+        while (cur().type == TokenType.PLUS ||
+               cur().type == TokenType.MINUS ||
+               cur().type == TokenType.GT) {
+
+            TokenType op = cur().type;
             advance();
-            node = new BinaryOpNode(node, op, term());
+            n = new BinaryOpNode(n, op, term());
+        }
+        return n;
+    }
+
+    List<ASTNode> block() {
+        List<ASTNode> list = new ArrayList<>();
+        expect(TokenType.LBRACE);
+
+        while (cur().type != TokenType.RBRACE && cur().type != TokenType.EOF) {
+            list.add(statement());
         }
 
-        return node;
+        expect(TokenType.RBRACE);
+        return list;
+    }
+
+    ASTNode statement() {
+
+        if (match(TokenType.PRINT)) {
+            expect(TokenType.LPAREN);
+            ExprNode e = expr();
+            expect(TokenType.RPAREN);
+            expect(TokenType.SEMICOLON);
+            return new PrintNode(e);
+        }
+
+        if (match(TokenType.LET)) {
+            Token name = cur();
+            expect(TokenType.IDENTIFIER);
+            expect(TokenType.EQUALS);
+            ExprNode e = expr();
+            expect(TokenType.SEMICOLON);
+            return new AssignmentNode(name.value, e);
+        }
+
+        if (match(TokenType.IF)) {
+            expect(TokenType.LPAREN);
+            ExprNode c = expr();
+            expect(TokenType.RPAREN);
+
+            List<ASTNode> ifB = block();
+            List<ASTNode> elseB = new ArrayList<>();
+
+            if (match(TokenType.ELSE)) {
+                elseB = block();
+            }
+
+            return new IfNode(c, ifB, elseB);
+        }
+
+        throw new RuntimeException("Unknown statement");
     }
 
     List<ASTNode> parse() {
         List<ASTNode> list = new ArrayList<>();
 
-        while (current().type != TokenType.EOF) {
-            try {
-                if (match(TokenType.PRINT)) {
-                    expect(TokenType.LPAREN);
-                    ExprNode e = expr();
-                    expect(TokenType.RPAREN);
-                    expect(TokenType.SEMICOLON);
-                    list.add(new PrintNode(e));
-                }
-                else if (match(TokenType.LET)) {
-                    Token nameToken = current();
-                    expect(TokenType.IDENTIFIER);
-                    expect(TokenType.EQUALS);
-                    ExprNode e = expr();
-                    expect(TokenType.SEMICOLON);
-                    list.add(new AssignmentNode(nameToken.value, e));
-                }
-                else if (current().type == TokenType.IDENTIFIER) {
-                    String name = current().value;
-                    advance();
-                    expect(TokenType.EQUALS);
-                    ExprNode e = expr();
-                    expect(TokenType.SEMICOLON);
-                    list.add(new AssignmentNode(name, e));
-                }
-                else {
-                    throw new RuntimeException("Unexpected token: " + current().type + 
-                                             " at line " + current().line);
-                }
-            } catch (Exception e) {
-                System.out.println("Syntax error: " + e.getMessage());
-                while (current().type != TokenType.SEMICOLON && 
-                       current().type != TokenType.EOF) {
-                    advance();
-                }
-                if (current().type == TokenType.SEMICOLON) {
-                    advance(); 
-                }
-            }
+        while (cur().type != TokenType.EOF) {
+            list.add(statement());
         }
-
         return list;
     }
 }
 
-
-class SemanticAnalyzer {
-    Map<String, String> table = new HashMap<>();
-    boolean hasError = false;
-
-    String getType(ExprNode n) {
-        if (n instanceof NumberNode)
-            return "number";
-        if (n instanceof StringNode)
-            return "string";
-
-        if (n instanceof VarNode) {
-            String name = ((VarNode) n).name;
-            if (!table.containsKey(name)) {
-                System.out.println("Error: Undefined variable '" + name + "'");
-                hasError = true;
-                return "unknown";
-            }
-            return table.get(name);
-        }
-
-        if (n instanceof BinaryOpNode) {
-            BinaryOpNode b = (BinaryOpNode) n;
-            String leftType = getType(b.left);
-            String rightType = getType(b.right);
-            
-            if (leftType.equals("unknown") || rightType.equals("unknown")) {
-                return "unknown";
-            }
-            
-            if (leftType.equals("string") || rightType.equals("string")) {
-                if (b.op == TokenType.PLUS) {
-                    return "string";
-                } else {
-                    System.out.println("Error: Cannot use operator " + b.op + 
-                                     " with string at line");
-                    hasError = true;
-                    return "unknown";
-                }
-            }
-            
-            if (!leftType.equals(rightType)) {
-                System.out.println("Error: Type mismatch: " + leftType + " vs " + rightType);
-                hasError = true;
-            }
-            
-            return leftType;
-        }
-
-        return "unknown";
-    }
-
-    void analyze(List<ASTNode> nodes) {
-        for (ASTNode n : nodes) {
-            if (n instanceof AssignmentNode) {
-                AssignmentNode a = (AssignmentNode) n;
-                String type = getType(a.expr);
-                if (!type.equals("unknown")) {
-                    String prevType = table.get(a.name);
-                    if (prevType != null && !prevType.equals(type)) {
-                        System.out.println("Warning: Variable '" + a.name + 
-                                         "' previously declared as " + prevType + 
-                                         ", now assigned as " + type);
-                    }
-                    table.put(a.name, type);
-                }
-            }
-        }
-        
-        if (!hasError) {
-            System.out.println("✓ Semantic analysis completed successfully");
-        } else {
-            System.out.println("✗ Semantic analysis found errors");
-        }
-    }
-}
-
 class Interpreter {
-    private Map<String, Object> environment = new HashMap<>();
-    private boolean hasError = false;
+    Map<String, Object> env = new HashMap<>();
 
-    Object evaluate(ExprNode expr) {
-        if (expr instanceof NumberNode) {
-            String val = ((NumberNode) expr).value;
+    Object eval(ExprNode e) {
+        if (e instanceof NumberNode) {
+            String val = ((NumberNode) e).value;
             if (val.contains(".")) {
                 return Double.parseDouble(val);
-            } else {
-                return Long.parseLong(val);
             }
+            return Integer.parseInt(val);
         }
-        
-        if (expr instanceof StringNode) {
-            return ((StringNode) expr).value;
+
+        if (e instanceof StringNode) {
+            return ((StringNode) e).value;
         }
-        
-        if (expr instanceof VarNode) {
-            String name = ((VarNode) expr).name;
-            if (!environment.containsKey(name)) {
-                throw new RuntimeException("Undefined variable: " + name);
+
+        if (e instanceof VarNode) {
+            Object val = env.get(((VarNode) e).name);
+            if (val == null) {
+                throw new RuntimeException("Undefined variable: " + ((VarNode) e).name);
             }
-            return environment.get(name);
+            return val;
         }
-        
-        if (expr instanceof BinaryOpNode) {
-            BinaryOpNode binOp = (BinaryOpNode) expr;
-            Object left = evaluate(binOp.left);
-            Object right = evaluate(binOp.right);
-            
-            switch (binOp.op) {
-                case PLUS:
-                    if (left instanceof String || right instanceof String) {
-                        return left.toString() + right.toString();
-                    }
-                    if (left instanceof Number && right instanceof Number) {
-                        if (left instanceof Double || right instanceof Double) {
-                            return ((Number) left).doubleValue() + ((Number) right).doubleValue();
-                        } else {
-                            return ((Number) left).longValue() + ((Number) right).longValue();
-                        }
-                    }
-                    break;
-                case MINUS:
-                    if (left instanceof Number && right instanceof Number) {
-                        if (left instanceof Double || right instanceof Double) {
-                            return ((Number) left).doubleValue() - ((Number) right).doubleValue();
-                        } else {
-                            return ((Number) left).longValue() - ((Number) right).longValue();
-                        }
-                    }
-                    break;
-                case MULTIPLY:
-                    if (left instanceof Number && right instanceof Number) {
-                        if (left instanceof Double || right instanceof Double) {
-                            return ((Number) left).doubleValue() * ((Number) right).doubleValue();
-                        } else {
-                            return ((Number) left).longValue() * ((Number) right).longValue();
-                        }
-                    }
-                    break;
-                case DIVIDE:
-                    if (left instanceof Number && right instanceof Number) {
-                        double result = ((Number) left).doubleValue() / ((Number) right).doubleValue();
-                        return result;
-                    }
-                    break;
-                default:
-                    throw new RuntimeException("Unknown operator: " + binOp.op);
-            }
-            throw new RuntimeException("Invalid operation: " + left + " " + binOp.op + " " + right);
-        }
-        
-        throw new RuntimeException("Unknown expression type");
-    }
-    
-    void execute(List<ASTNode> nodes) {
-        System.out.println("\n=== Program Output ===\n");
-        
-        for (ASTNode node : nodes) {
-            try {
-                if (node instanceof AssignmentNode) {
-                    AssignmentNode assign = (AssignmentNode) node;
-                    Object value = evaluate(assign.expr);
-                    environment.put(assign.name, value);
-                } else if (node instanceof PrintNode) {
-                    PrintNode print = (PrintNode) node;
-                    Object value = evaluate(print.expr);
-                    System.out.println(value);
+
+        if (e instanceof BinaryOpNode) {
+            BinaryOpNode b = (BinaryOpNode) e;
+            Object left = eval(b.left);
+            Object right = eval(b.right);
+
+            if (b.op == TokenType.PLUS) {
+                if (left instanceof String || right instanceof String) {
+                    return left.toString() + right.toString();
                 }
-            } catch (Exception e) {
-                System.err.println("Runtime error: " + e.getMessage());
-                hasError = true;
+
+                if (left instanceof Integer && right instanceof Integer) {
+                    return (Integer) left + (Integer) right;
+                }
+                if (left instanceof Double || right instanceof Double) {
+                    double l = left instanceof Double ? (Double) left : ((Integer) left).doubleValue();
+                    double r = right instanceof Double ? (Double) right : ((Integer) right).doubleValue();
+                    return l + r;
+                }
             }
+            
+            if (left instanceof String || right instanceof String) {
+                throw new RuntimeException("Cannot perform " + b.op + " on strings");
+            }
+
+            double l = left instanceof Double ? (Double) left : ((Integer) left).doubleValue();
+            double r = right instanceof Double ? (Double) right : ((Integer) right).doubleValue();
+
+            return switch (b.op) {
+                case MINUS -> l - r;
+                case MULTIPLY -> l * r;
+                case DIVIDE -> 
+                {
+                    if (r == 0) throw new RuntimeException("Division by zero");
+                    yield l / r;
+                }
+                case GT -> l > r;
+                default -> throw new RuntimeException("Unknown operator: " + b.op);
+            };
         }
-        
-        if (!hasError) {
-            System.out.println("\n✓ Program executed successfully");
+
+        throw new RuntimeException("Unknown expression type: " + e.getClass());
+    }
+
+    void exec(List<ASTNode> nodes) {
+        for (ASTNode n : nodes) {
+            if (n instanceof AssignmentNode a) {
+                env.put(a.name, eval(a.expr));
+            } else if (n instanceof PrintNode p) {
+                Object result = eval(p.expr);
+                System.out.println(result);
+            } else if (n instanceof IfNode i) {
+                Object cond = eval(i.cond);
+                boolean condition;
+                
+                if (cond instanceof Boolean) {
+                    condition = (Boolean) cond;
+                } else if (cond instanceof Integer) {
+                    condition = (Integer) cond != 0;
+                } else if (cond instanceof Double) {
+                    condition = (Double) cond != 0;
+                } else {
+                    throw new RuntimeException("Invalid condition type: " + cond.getClass());
+                }
+                
+                if (condition) {
+                    exec(i.ifBlock);
+                } else {
+                    exec(i.elseBlock);
+                }
+            }
         }
     }
 }
@@ -559,116 +458,18 @@ class Interpreter {
 public class Compiler {
     public static void main(String[] args) throws Exception {
         if (args.length == 0) {
-            System.err.println("Usage: java Compiler <filename.bangla>");
-            System.exit(1);
+            System.out.println("Usage: java Compiler <filename>");
+            return;
         }
         
-        String filename = args[0];
-        if (!filename.endsWith(".bangla")) {
-            System.err.println("Warning: File should have .bangla extension");
-        }
+        String src = Files.readString(Paths.get(args[0]));
 
-        String src = Files.readString(Paths.get(filename), java.nio.charset.StandardCharsets.UTF_8);
-        
-        System.out.println("=== Compiling " + filename + " ===\n");
-        
-        System.out.println("1. Lexical Analysis");
-        Lexer lex = new Lexer(src);
-        List<Token> tokens = lex.tokenize();
-        System.out.println("   ✓ " + tokens.size() + " tokens generated");
+        Lexer l = new Lexer(src);
+        Parser p = new Parser(l.tokenize());
 
-        System.out.println("\n2. Parsing");
-        Parser parser = new Parser(tokens);
-        List<ASTNode> ast = parser.parse();
-        System.out.println("   ✓ AST generated with " + ast.size() + " statements");
-        
-        System.out.println("\n3. Semantic Analysis");
-        SemanticAnalyzer sem = new SemanticAnalyzer();
-        sem.analyze(ast);
-        
-        System.out.println("\n4. Interpretation");
-        Interpreter interpreter = new Interpreter();
-        interpreter.execute(ast);
+        Interpreter it = new Interpreter();
+        it.exec(p.parse());
 
-        System.out.println("\n=== Generating Python Code ===");
-        CodeGen gen = new CodeGen();
-        String code = gen.generate(ast);
-        Files.writeString(Paths.get("out.py"), code);
-        System.out.println("✓ Generated out.py");
-    }
-}
-
-
-class CodeGen {
-
-    String genExpr(ExprNode n) {
-        if (n instanceof NumberNode)
-            return ((NumberNode) n).value;
-
-        if (n instanceof StringNode)
-            return "\"" + escapeString(((StringNode) n).value) + "\"";
-
-        if (n instanceof VarNode)
-            return ((VarNode) n).name;
-
-        if (n instanceof BinaryOpNode) {
-            BinaryOpNode b = (BinaryOpNode) n;
-
-            String left = genExpr(b.left);
-            String right = genExpr(b.right);
-
-            switch (b.op) {
-                case PLUS:
-                    return left + " + " + right;
-
-                case MINUS:
-                    return left + " - " + right;
-
-                case MULTIPLY:
-                    return left + " * " + right;
-
-                case DIVIDE:
-                    return left + " / " + right;
-
-                default:
-                    throw new RuntimeException("Unknown operator: " + b.op);
-            }
-        }
-
-        return "";
-    }
-    
-    private String escapeString(String s)
-    {
-        return s.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\t", "\\t");
-    }
-
-    String generate(List<ASTNode> nodes) {
-        StringBuilder sb = new StringBuilder();
-
-        sb.append("# Generated Python code from Bangla compiler\n")
-          .append("# Run with: python3 out.py\n\n");
-
-        for (ASTNode n : nodes) {
-            if (n instanceof AssignmentNode) {
-                AssignmentNode a = (AssignmentNode) n;
-                sb.append(a.name)
-                  .append(" = ")
-                  .append(genExpr(a.expr))
-                  .append("\n");
-            }
-
-            if (n instanceof PrintNode) {
-                PrintNode p = (PrintNode) n;
-                sb.append("print(")
-                  .append(genExpr(p.expr))
-                  .append(")\n");
-            }
-        }
-
-        return sb.toString();
+        System.out.println("Done");
     }
 }
